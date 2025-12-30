@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>真・結界師VR — Refactored</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#87CEEB">
+<link rel="stylesheet" href="style.css">
+<script>
+  window.onerror = function(msg, url, line) {
+    const box = document.getElementById('error-log');
+    if(box) {
+      box.style.display = 'block';
+      box.textContent += "Error: " + msg + "\nLine: " + line + "\n";
+    }
+    return false;
+  };
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="error-log"></div>
+<div id="damage-overlay"></div>
+
+<!-- Mobile/PC HUD -->
+<div id="hud" class="novr-only">
+  <span id="versionText">Refactored v1.0</span>
+  <div class="hud-box">
+    <div class="mission-info" id="missionText">Loading...</div>
+    <span class="big-text" id="waveVal">WAVE 1</span><br>
+    <span class="sub-text">ノルマ: <span id="targetVal" style="color:#f88;">10</span></span>
+  </div>
+  <div class="hud-box">
+    <span class="sub-text">HP: <span id="hpText">100</span></span>
+    <div class="bar-bg"><div id="hpBar" class="hp-val"></div></div>
+    <div style="height:4px;"></div>
+    <span class="sub-text" style="color:#00bfff;">SP: <span id="spText">100</span></span>
+    <div class="bar-bg"><div id="spBar" class="sp-val"></div></div>
+  </div>
+  <div class="hud-box" id="vipBox" style="display:none; border-color:#0f0;">
+    <span class="sub-text" style="color:#0f0;">護衛対象 (脱出中)</span>
+    <div class="bar-bg"><div id="vipHpBar" class="hp-val" style="background:#0ff;"></div></div>
+  </div>
+</div>
+
+<div id="msgArea"><div id="flashMsg" class="flash-msg"></div></div>
+<div id="centerReticle" class="novr-only"></div>
+<button id="vrBtn">VR START</button>
+
+<!-- Mobile Controllers -->
+<div id="uiLayer" class="novr-only">
+  <div id="stickZone"><div class="stick-base"><div id="stickKnob" class="stick-knob"></div></div></div>
+  <div id="padArea">
+    <div id="modeSwitch" class="ghost">モード: 幽体</div>
+    <div id="btnUp" class="btn">距離<br><span id="distLabel" style="color:#fe0">近</span></div>
+    <div id="btnLeft" class="btn">滅<br><span style="font-size:10px">⇔解</span></div>
+    <div id="btnRight" class="btn">結<br><span style="font-size:10px">Hold</span></div>
+    <div id="btnDown" class="btn">跳</div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

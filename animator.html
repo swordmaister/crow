@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>3D Homage Animator Tool</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+  body { margin: 0; background: #222; overflow: hidden; font-family: sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #ui {
+    position: absolute;
+    top: 0; left: 0; width: 100%;
+    padding: 10px;
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    z-index: 10;
+  }
+
+  button {
+    background: #00bcd4;
+    border: none;
+    padding: 8px 16px;
+    color: #fff;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  button:hover { background: #00acc1; }
+
+  .info { font-size: 12px; color: #aaa; margin-left: auto; margin-right: 20px;}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="ui">
+  <button id="btnGen10">Generate 10 Variations</button>
+  <button id="btnGen1">Generate 1 (Focus)</button>
+  <div class="info">Scissor Grid System Active</div>
+</div>
+
+<canvas id="mainCanvas"></canvas>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ------------------------------------------------------------------
+// 1. SCENE GENERATOR (Based on User Prompt)
+// ------------------------------------------------------------------
+class CastleGenerator {
+    constructor() {
+        this.palettes = [
+            { name: "Day", sky: 0x88ccff, fog: 0x88ccff, light: 0xffffff, stone: 0x999999, crystal: 0x44aaff, leaf: 0x226611 },
+            { name: "Sunset", sky: 0xffaa66, fog: 0xffaa66, light: 0xffccaa, stone: 0x886655, crystal: 0xff4444, leaf: 0xaa6600 },
+            { name: "Night", sky: 0x001133, fog: 0x001133, light: 0x6688ff, stone: 0x444455, crystal: 0x00ffff, leaf: 0x004411 },
+            { name: "Mist", sky: 0xcccccc, fog: 0xcccccc, light: 0xffffff, stone: 0x888888, crystal: 0x88ffff, leaf: 0x445544 },
+            { name: "Toxic", sky: 0x330033, fog: 0x330033, light: 0xaa00aa, stone: 0x333333, crystal: 0x00ff00, leaf: 0x440044 }
+        ];
+    }
+
+    generate(scene, renderer, seed) {
+        // --- Setup Randomness ---
+        const rand = () => {
+            seed = (seed * 9301 + 49297) % 233280;
+            return seed / 233280;
+        };
+        const range = (min, max) => min + rand() * (max - min);
+
+        // --- Pick Palette ---
+        const pIdx = Math.floor(range(0, this.palettes.length));
+        const palette = this.palettes[pIdx];
+
+        // 1. Environment
+        scene.background = new THREE.Color(palette.sky);
+        scene.fog = new THREE.Fog(palette.fog, 20, 300);
+
+        // 2. Lighting
+        const sunLight = new THREE.DirectionalLight(palette.light, 1.5);
+        sunLight.position.set(50, 100, 50);
+        sunLight.castShadow = true;
+        // Optimization: Reduce shadow map size for grid view
+        sunLight.shadow.mapSize.width = 1024;
+        sunLight.shadow.mapSize.height = 1024;
+        sunLight.shadow.camera.left = -50;
+        sunLight.shadow.camera.right = 50;
+        sunLight.shadow.camera.top = 50;
+        sunLight.shadow.camera.bottom = -50;
+        scene.add(sunLight);
+
+        const hemiLight = new THREE.HemisphereLight(palette.sky, 0x444444, 0.6);
+        scene.add(hemiLight);
+
+        // 3. Castle Structure
+        const castleGroup = new THREE.Group();
+        castleGroup.position.set(0, 0, -80);
+        scene.add(castleGroup);
+
+        const stoneMat = new THREE.MeshStandardMaterial({ color: palette.stone, roughness: 0.9, flatShading: true });
+        const mossMat = new THREE.MeshStandardMaterial({ color: 0x335522, roughness: 1.0, flatShading: true });
+        const crystalMat = new THREE.MeshPhysicalMaterial({
+            color: palette.crystal, emissive: palette.crystal, emissiveIntensity: 0.5,
+            metalness: 0.0, roughness: 0.1, transmission: 0.6, thickness: 2.0
+        });
+
+        // A. Foundation
+        const baseGeo = new THREE.IcosahedronGeometry(30, 1); // Reduced detail for performance
+        const basePos = baseGeo.attributes.position;
+        const tempVec = new THREE.Vector3();
+        for (let i = 0; i < basePos.count; i++) {
+            tempVec.fromBufferAttribute(basePos, i);
+            if (tempVec.y > 0) tempVec.y *= 0.1;
+            else {
+                const noise = Math.sin(tempVec.x * 0.2) * Math.cos(tempVec.z * 0.2);
+                tempVec.multiplyScalar(1.0 + Math.abs(noise) * 0.3);
+                tempVec.y *= 1.2;
+            }
+            basePos.setXYZ(i, tempVec.x, tempVec.y, tempVec.z);
+        }
+        baseGeo.computeVertexNormals();
+        const baseMesh = new THREE.Mesh(baseGeo, stoneMat);
+        baseMesh.castShadow = true;
+        baseMesh.receiveShadow = true;
+        castleGroup.add(baseMesh);
+
+        // B. Crystal
+        const crystal = new THREE.Mesh(new THREE.IcosahedronGeometry(8, 0), crystalMat);
+        crystal.position.y = -15;
+        crystal.scale.set(0.5, 1.5, 0.5);
+        castleGroup.add(crystal);
+
+        // C. City (Instanced)
+        const bGeo = new THREE.BoxGeometry(1, 1, 1);
+        const bCount = Math.floor(range(100, 400));
+        const cityMesh = new THREE.InstancedMesh(bGeo, stoneMat, bCount);
+        cityMesh.castShadow = true;
+        cityMesh.receiveShadow = true;
+        const dummy = new THREE.Object3D();
+        let idx = 0;
+
+        // Randomize City Layout
+        const layers = Math.floor(range(1, 4));
+        for(let L=0; L<layers; L++) {
+            const count = bCount / layers;
+            const radiusBase = 10 + L * 10;
+            for(let i=0; i<count; i++) {
+                if(idx >= bCount) break;
+                const ang = range(0, Math.PI * 2);
+                const r = radiusBase + range(0, 5);
+                const h = range(2, 8);
+                const w = range(1, 2);
+                dummy.position.set(Math.cos(ang)*r, h/2, Math.sin(ang)*r);
+                dummy.rotation.y = ang;
+                dummy.scale.set(w, h, w);
+                dummy.updateMatrix();
+                cityMesh.setMatrixAt(idx++, dummy.matrix);
+            }
+        }
+        castleGroup.add(cityMesh);
+
+        // D. Tree
+        const treeGroup = new THREE.Group();
+        treeGroup.position.y = 2;
+        castleGroup.add(treeGroup);
+
+        const trunkH = range(10, 25);
+        const trunkGeo = new THREE.CylinderGeometry(range(2,5), range(5,10), trunkH, 6);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3c31, roughness: 0.9 });
+        const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+        trunk.position.y = trunkH/2;
+        trunk.castShadow = true;
+        treeGroup.add(trunk);
+
+        const leafGeo = new THREE.IcosahedronGeometry(1, 0);
+        const leafMat = new THREE.MeshStandardMaterial({ color: palette.leaf, roughness: 0.8 });
+        const fCount = Math.floor(range(50, 200));
+        const fMesh = new THREE.InstancedMesh(leafGeo, leafMat, fCount);
+        fMesh.castShadow = true;
+        treeGroup.add(fMesh);
+
+        for(let i=0; i<fCount; i++) {
+            const r = range(5, 15);
+            const theta = range(0, Math.PI*2);
+            const phi = Math.acos(2 * range(0,1) - 1);
+            const x = r * Math.sin(phi) * Math.cos(theta);
+            const y = r * Math.sin(phi) * Math.sin(theta) + trunkH;
+            const z = r * Math.cos(phi);
+            dummy.position.set(x,y,z);
+            dummy.scale.setScalar(range(2, 5));
+            dummy.rotation.set(rand(), rand(), rand());
+            dummy.updateMatrix();
+            fMesh.setMatrixAt(i, dummy.matrix);
+        }
+
+        // E. Clouds
+        const cGroup = new THREE.Group();
+        scene.add(cGroup);
+        const cGeo = new THREE.DodecahedronGeometry(10, 0);
+        const cMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, flatShading: true });
+        const cMesh = new THREE.InstancedMesh(cGeo, cMat, 20);
+        for(let i=0; i<20; i++) {
+            const ang = range(0, Math.PI*2);
+            const dist = range(50, 100);
+            const y = range(-20, 20);
+            dummy.position.set(Math.cos(ang)*dist, y, Math.sin(ang)*dist - 80);
+            dummy.scale.setScalar(range(1, 3));
+            dummy.updateMatrix();
+            cMesh.setMatrixAt(i, dummy.matrix);
+        }
+        cGroup.add(cMesh);
+
+        // Birds (Data)
+        const birds = [];
+        const birdGeo = new THREE.ConeGeometry(0.2, 0.8, 4);
+        birdGeo.rotateX(Math.PI/2);
+        const birdMesh = new THREE.InstancedMesh(birdGeo, new THREE.MeshBasicMaterial({color:0xffffff}), 50);
+        scene.add(birdMesh);
+        for(let i=0; i<50; i++) {
+            birds.push({
+                offset: range(0, 100),
+                speed: range(0.3, 0.8),
+                radius: range(30, 60),
+                height: range(5, 25),
+                centerOffset: new THREE.Vector3(range(-10,10), 0, range(-10,10))
+            });
+        }
+
+        // Return update function
+        return (time) => {
+            castleGroup.rotation.y = time * 0.05;
+            cGroup.rotation.y = time * 0.02;
+
+            // Pulse crystal
+            const pulse = 0.5 + Math.sin(time * 2) * 0.2;
+            if (crystalMat.emissiveIntensity !== undefined) crystalMat.emissiveIntensity = pulse;
+
+            // Birds
+            for(let i=0; i<50; i++) {
+                const d = birds[i];
+                const t = time * d.speed + d.offset;
+                const bx = Math.cos(t) * d.radius;
+                const bz = Math.sin(t) * d.radius - 80;
+                const by = d.height + Math.sin(t*3)*2;
+                dummy.position.set(bx, by, bz).add(d.centerOffset);
+                const target = dummy.position.clone().add(new THREE.Vector3(-Math.sin(t)*d.radius, 0, Math.cos(t)*d.radius));
+                dummy.lookAt(target);
+                dummy.updateMatrix();
+                birdMesh.setMatrixAt(i, dummy.matrix);
+            }
+            birdMesh.instanceMatrix.needsUpdate = true;
+        };
+    }
+}
+
+// ------------------------------------------------------------------
+// 2. GRID MANAGER (Scissor Test)
+// ------------------------------------------------------------------
+class GridManager {
+    constructor() {
+        this.canvas = document.getElementById('mainCanvas');
+        this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        this.scenes = []; // { scene, camera, updateFn }
+        this.generator = new CastleGenerator();
+
+        window.addEventListener('resize', () => this.resize());
+    }
+
+    start() {
+        this.renderer.setAnimationLoop((t) => this.render(t));
+    }
+
+    generate(count) {
+        // Clear old scenes
+        this.scenes.forEach(s => {
+            s.scene.traverse(o => {
+                if(o.geometry) o.geometry.dispose();
+                if(o.material) {
+                    if(Array.isArray(o.material)) o.material.forEach(m=>m.dispose());
+                    else o.material.dispose();
+                }
+            });
+        });
+        this.scenes = [];
+
+        // Create new scenes
+        for(let i=0; i<count; i++) {
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+            camera.position.set(0, 20, 20); // Relative to lookAt will be set in render
+
+            // Random Seed for this scene
+            const seed = Date.now() + i * 1234;
+            const updateFn = this.generator.generate(scene, this.renderer, seed);
+
+            this.scenes.push({ scene, camera, updateFn });
+        }
+
+        this.resize();
+    }
+
+    resize() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        this.renderer.setSize(w, h);
+        this.updateCameras(w, h);
+    }
+
+    updateCameras(w, h) {
+        const count = this.scenes.length;
+        if(count === 0) return;
+
+        // Calculate grid cols/rows
+        let cols = Math.ceil(Math.sqrt(count));
+        let rows = Math.ceil(count / cols);
+
+        // Adjust aspect ratio
+        if (w > h) {
+             // Keep it roughly square tiles or landscape tiles
+        }
+
+        this.grid = { cols, rows, w: w/cols, h: h/rows };
+
+        this.scenes.forEach(s => {
+            s.camera.aspect = this.grid.w / this.grid.h;
+            s.camera.updateProjectionMatrix();
+        });
+    }
+
+    render(timeMs) {
+        const time = timeMs * 0.001;
+
+        // Use scissor test to render multiple viewports
+        this.renderer.setScissorTest(true);
+
+        const height = this.renderer.domElement.height;
+        // NOTE: Scissor origin is Lower-Left, but grid usually Top-Left.
+
+        if (this.scenes.length === 0) {
+            this.renderer.setScissorTest(false);
+            this.renderer.clear();
+            return;
+        }
+
+        const { cols, w, h } = this.grid;
+
+        this.scenes.forEach((s, i) => {
+            // Update Scene Animation
+            if(s.updateFn) s.updateFn(time);
+
+            // Calculate Viewport
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+
+            // In Three.js scissor: (x, y, width, height) where y is from bottom
+            const x = col * w;
+            const y = height - (row + 1) * h; // Flip Y
+
+            this.renderer.setViewport(x, y, w, h);
+            this.renderer.setScissor(x, y, w, h);
+
+            // Camera Orbit (Simple)
+            // s.camera.position.x = Math.sin(time * 0.1) * 120;
+            // s.camera.position.z = Math.cos(time * 0.1) * 120 - 80;
+            const camTime = time * 0.1 + i;
+            const r = 100;
+            s.camera.position.set(
+                Math.sin(camTime) * r,
+                20 + Math.sin(time * 0.2) * 10,
+                Math.cos(camTime) * r - 80
+            );
+            s.camera.lookAt(0, 0, -80);
+
+            this.renderer.render(s.scene, s.camera);
+        });
+
+        this.renderer.setScissorTest(false);
+    }
+}
+
+// ------------------------------------------------------------------
+// 3. MAIN INIT
+// ------------------------------------------------------------------
+const app = new GridManager();
+app.start();
+
+// Default: Generate 10
+app.generate(10);
+
+// Buttons
+document.getElementById('btnGen10').addEventListener('click', () => {
+    app.generate(10);
+});
+document.getElementById('btnGen1').addEventListener('click', () => {
+    app.generate(1);
+});
+
+</script>
+</body>
+</html>
